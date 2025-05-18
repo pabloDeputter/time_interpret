@@ -161,9 +161,6 @@ class LofLime(Lime, LOF):
             kwargs includes baselines, feature_mask, num_interp_features
             (integer, determined from feature mask).
 
-    References:
-        `Time Interpret: a Unified Model Interpretability Library for Time Series <https://arxiv.org/abs/2306.02968>`_
-
     Examples:
         >>> import torch as th
         >>> from tint.attr import LofLime
@@ -226,9 +223,6 @@ class LofKernelShap(KernelShap, LOF):
         embeddings (Tensor): Tensor of embeddings to compute the LOF.
         n_neighbors (int): Number of neighbors to use by default.
             Default to 20
-
-    References:
-        `Time Interpret: a Unified Model Interpretability Library for Time Series <https://arxiv.org/abs/2306.02968>`_
 
     Examples:
         >>> import torch as th

@@ -15,6 +15,7 @@ def logit(x):
     return 1.0 / (1 + np.exp(-2 * x))
 
 
+
 class HMM(DataModule):
     """
     2-state Hidden Markov Model as described in the DynaMask paper.
@@ -73,6 +74,9 @@ class HMM(DataModule):
         fold: int = None,
         num_workers: int = 0,
         seed: int = 42,
+        train_size: int = 800,
+        test_size: int = 200,
+        signal_length: int = 200,
     ):
         super().__init__(
             data_dir=data_dir,
@@ -91,6 +95,10 @@ class HMM(DataModule):
         self.imp_feature = imp_features or [1, 2]
         self.scale = scale or [[0.1, 1.6, 0.5], [-0.1, -0.4, -1.5]]
         self.p0 = p0 or [0.5]
+
+        self.train_size = train_size
+        self.test_size = test_size
+        self.signal_length = signal_length
 
     def init_dist(self):
         # Covariance matrix is constant across states but distribution
@@ -125,6 +133,13 @@ class HMM(DataModule):
         params = params - float(t / 500) if params > 0.8 else params
         next_state = np.random.binomial(1, params)
         return next_state
+    
+    def get_base_file_path(self, split: str = "train"):
+        return os.path.join(
+            self.data_dir,
+            (f"{split}_{self.train_size}_{self.test_size}_{self.signal_length}_{self.n_signal}_" +
+             f"{self.train}_{self.seed}_")
+        )
 
     def download(
         self,
@@ -133,12 +148,12 @@ class HMM(DataModule):
         signal_length: int = 200,
         split: str = "train",
     ):
-        file = os.path.join(self.data_dir, f"{split}_")
+        base_file_path = self.get_base_file_path(split)
 
         if split == "train":
-            count = train_size
+            count = self.train_size
         elif split == "test":
-            count = test_size
+            count = self.test_size
         else:
             raise NotImplementedError
 
@@ -159,7 +174,7 @@ class HMM(DataModule):
             previous = np.random.binomial(1, self.p0)[0]
             delta_state = 0
             state_n = None
-            for i in range(signal_length):
+            for i in range(self.signal_length):
                 next = self.next_state(previous, delta_state)
                 state_n = next
 
@@ -198,35 +213,35 @@ class HMM(DataModule):
             label_logits.append(y_logits)
 
         with open(
-            os.path.join(self.data_dir, file + "features.npz"), "wb"
+            os.path.join(self.data_dir, base_file_path + "features.npz"), "wb"
         ) as fp:
             pkl.dump(obj=features, file=fp)
         with open(
-            os.path.join(self.data_dir, file + "labels.npz"), "wb"
+            os.path.join(self.data_dir, base_file_path + "labels.npz"), "wb"
         ) as fp:
             pkl.dump(obj=labels, file=fp)
         with open(
-            os.path.join(self.data_dir, file + "importance.npz"), "wb"
+            os.path.join(self.data_dir, base_file_path + "importance.npz"), "wb"
         ) as fp:
             pkl.dump(obj=importance_score, file=fp)
         with open(
-            os.path.join(self.data_dir, file + "states.npz"), "wb"
+            os.path.join(self.data_dir, base_file_path + "states.npz"), "wb"
         ) as fp:
             pkl.dump(obj=all_states, file=fp)
         with open(
-            os.path.join(self.data_dir, file + "labels_logits.npz"), "wb"
+            os.path.join(self.data_dir, base_file_path + "labels_logits.npz"), "wb"
         ) as fp:
             pkl.dump(obj=label_logits, file=fp)
 
     def preprocess(self, split: str = "train") -> dict:
-        file = os.path.join(self.data_dir, f"{split}_")
+        base_file_path = self.get_base_file_path(split)
 
         with open(
-            os.path.join(self.data_dir, file + "features.npz"), "rb"
+            os.path.join(self.data_dir, base_file_path + "features.npz"), "rb"
         ) as fp:
             features = np.stack(pkl.load(file=fp))
         with open(
-            os.path.join(self.data_dir, file + "labels.npz"), "rb"
+            os.path.join(self.data_dir, base_file_path + "labels.npz"), "rb"
         ) as fp:
             labels = np.stack(pkl.load(file=fp))
 
@@ -237,28 +252,20 @@ class HMM(DataModule):
 
     def prepare_data(self):
         """"""
-        if not os.path.exists(
-            os.path.join(self.data_dir, "train_features.npz")
-        ):
+        if not os.path.exists(self.get_base_file_path("train") + "features.npz"):
             self.download(split="train")
-        if not os.path.exists(
-            os.path.join(self.data_dir, "test_features.npz")
-        ):
+        if not os.path.exists(self.get_base_file_path("test") + "features.npz"):
             self.download(split="test")
 
     def true_saliency(self, split: str = "train") -> th.Tensor:
-        file = os.path.join(self.data_dir, f"{split}_")
+        base_file_path = self.get_base_file_path(split)
 
-        with open(
-            os.path.join(self.data_dir, file + "features.npz"), "rb"
-        ) as fp:
+        with open(base_file_path + "features.npz", "rb") as fp:
             features = np.stack(pkl.load(file=fp))
 
         # Load the true states that define the truly salient features
         # and define A as in Section 3.2:
-        with open(
-            os.path.join(self.data_dir, file + "states.npz"), "rb"
-        ) as fp:
+        with open(base_file_path + "states.npz", "rb") as fp:
             true_states = np.stack(pkl.load(file=fp))
             true_states += 1
 

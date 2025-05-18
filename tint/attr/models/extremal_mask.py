@@ -29,11 +29,15 @@ class ExtremalMaskNN(nn.Module):
         forward_func: Callable,
         model: nn.Module = None,
         batch_size: int = 32,
+        save_baselines: bool = False,
     ) -> None:
         super().__init__()
         object.__setattr__(self, "forward_func", forward_func)
         self.model = model
         self.batch_size = batch_size
+        self.save_baselines = save_baselines
+        self.all_baselines = None
+        self.curr_device = None
 
         self.input_size = None
         self.register_parameter("mask", None)
@@ -43,6 +47,8 @@ class ExtremalMaskNN(nn.Module):
         self.batch_size = batch_size
 
         self.mask = nn.Parameter(th.Tensor(*input_size))
+        if self.save_baselines:
+            self.all_baselines = None
 
         self.reset_parameters()
 
@@ -59,6 +65,8 @@ class ExtremalMaskNN(nn.Module):
     ) -> (th.Tensor, th.Tensor):
         mask = self.mask
 
+        self.curr_device = mask.device
+
         # Subset sample to current batch
         mask = mask[
             self.batch_size * batch_idx : self.batch_size * (batch_idx + 1)
@@ -67,9 +75,28 @@ class ExtremalMaskNN(nn.Module):
         # We clamp the mask
         mask = mask.clamp(0, 1)
 
-        # If model is provided, we use it as the baselines
+        generated_baselines = None
         if self.model is not None:
-            baselines = self.model(x - baselines)
+            generated_baselines = self.model(x - baselines)
+            
+            # Save baselines if enabled
+            if self.save_baselines:
+                with th.no_grad():
+                    if self.all_baselines is None:
+                        # First time - initialize storage tensor
+                        self.all_baselines = th.zeros(
+                            self.input_size,
+                            dtype=generated_baselines.dtype,
+                            device=self.curr_device
+                        )
+                    
+                    # Save this batch's baselines
+                    start_idx = self.batch_size * batch_idx
+                    end_idx = start_idx + x.shape[0]  # Use actual batch size which might be smaller
+                    self.all_baselines[start_idx:end_idx] = generated_baselines.detach()
+            
+            # Use the generated baselines
+            baselines = generated_baselines
 
         # Mask data according to samples
         # We eventually cut samples up to x time dimension
@@ -77,9 +104,9 @@ class ExtremalMaskNN(nn.Module):
         # x2 represents inputs with unimportant features masked.
         mask = mask[:, : x.shape[1], ...]
         x1 = x * mask + baselines * (1.0 - mask)
-        x2 = x * (1.0 - mask) + baselines * mask
+        # x2 = x * (1.0 - mask) + baselines * mask NOTE: this was in the original code, however, this is inconsistent with the paper
 
-        # Return f(perturbed x)
+        # Return f(perturbed x)  NOTE: returning a tuple here is not necessary anymore as we only use x1
         return (
             _run_forward(
                 forward_func=self.forward_func,
@@ -89,7 +116,7 @@ class ExtremalMaskNN(nn.Module):
             ),
             _run_forward(
                 forward_func=self.forward_func,
-                inputs=x2,
+                inputs=x1,
                 target=target,
                 additional_forward_args=additional_forward_args,
             ),
@@ -153,11 +180,13 @@ class ExtremalMaskNet(Net):
         lr_scheduler: Union[dict, str] = None,
         lr_scheduler_args: dict = None,
         l2: float = 0.0,
+        save_baselines: bool = False,
     ):
         mask = ExtremalMaskNN(
             forward_func=forward_func,
             model=model,
             batch_size=batch_size,
+            save_baselines=save_baselines,
         )
 
         super().__init__(
@@ -231,7 +260,10 @@ class ExtremalMaskNet(Net):
                 * batch_idx : self.net.batch_size
                 * (batch_idx + 1)
             ]
-            mask_ += self.lambda_2 * self.net.model(x - baselines).abs()
+            if self.preservation_mode:
+                mask_ += self.lambda_2 * self.net.model(x - baselines).abs()
+            else:
+                mask_ += self.lambda_2 * (self.net.model(x) - x)**2
         loss = mask_.mean()
 
         # Add preservation and deletion losses if required
@@ -274,3 +306,12 @@ class ExtremalMaskNet(Net):
             return {"optimizer": optim, "lr_scheduler": lr_scheduler}
 
         return {"optimizer": optim}
+
+    def get_saved_baselines(self):
+        """
+        Access the saved baselines from the underlying ExtremalMaskNN
+        
+        Returns:
+            torch.Tensor: Tensor of all saved baselines or None if not saved
+        """
+        return self.net.all_baselines.detach().cpu() if self.net.save_baselines else None

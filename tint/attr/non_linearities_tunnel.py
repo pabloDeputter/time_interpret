@@ -38,8 +38,7 @@ class NonLinearitiesTunnel(Attribution):
             Conductance or Saliency.
 
     References:
-        #. `Time Interpret: a Unified Model Interpretability Library for Time Series <https://arxiv.org/abs/2306.02968>`_
-        #. `Explanations can be manipulated and geometry is to blame <https://arxiv.org/abs/1906.07983>`_
+        `Explanations can be manipulated and geometry is to blame <https://arxiv.org/abs/1906.07983>`_
 
     Examples:
         >>> import torch as th
